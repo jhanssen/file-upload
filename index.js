@@ -38,7 +38,7 @@ if (dstSystem !== "posix" && dstSystem != "win32") {
 }
 const dstPath = path[dstSystem];
 
-const matches = options.json("matches");
+const matches = options("matches");
 if (matches !== undefined && !(matches instanceof Array)) {
     console.error("matches needs to be undefined or an array");
     process.exit(1);
