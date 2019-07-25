@@ -1,9 +1,8 @@
-const options = require("@jhanssen/options")("video-upload");
+const options = require("@jhanssen/options")("file-upload");
 const chokidar = require("chokidar");
 const path = require("path");
 const fs = require("fs");
 const SSH2 = require('ssh2-promise');
-const { promisify } = require("util");
 
 const server = options("server");
 if (!server) {
