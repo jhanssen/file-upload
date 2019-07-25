@@ -86,12 +86,19 @@ const ssh = new SSH2(ssh2settings);
 
     const upload = (file, dst) => {
         const fn = path.basename(file);
+        let rs, ws;
         try {
-            const ws = sftp.createWriteStream(dstPath.join(dst, fn));
-            const rs = fs.createReadStream(file);
-            rs.pipe(ws);
+            sftp.createWriteStream(dstPath.join(dst, fn)).then(ws => {
+                rs = fs.createReadStream(file);
+                rs.pipe(ws);
+            }).catch(e => {
+                console.error("failed to create sftp write stream", dstPath.join(dst, fn), e);
+            });
         } catch (e) {
-            console.error("failed to upload", file, dstPath.join(dst, fn), e);
+            console.error("failed to upload", file);
+            if (rs) {
+                rs.destroy();
+            }
         }
     };
 
