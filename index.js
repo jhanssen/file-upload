@@ -100,6 +100,7 @@ const ssh = new SSH2(ssh2settings);
         ignored: /(^|[\/\\])\../
     });
     watcher.on("add", file => {
+        console.log("file added", file);
         if (matches) {
             for (let m = 0; m < matches.length; ++m) {
                 const match = matches[m];
