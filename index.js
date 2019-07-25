@@ -90,9 +90,13 @@ const ssh = new SSH2(ssh2settings);
         try {
             sftp.createWriteStream(dstPath.join(dst, fn)).then(ws => {
                 rs = fs.createReadStream(file);
+                ws.on("finish", () => {
+                    console.log("uploaded", file);
+                });
+                console.log("uploading", file);
                 rs.pipe(ws);
             }).catch(e => {
-                console.error("failed to create sftp write stream", dstPath.join(dst, fn), e);
+                console.error("failed to upload", dstPath.join(dst, fn), e);
             });
         } catch (e) {
             console.error("failed to upload", file);
