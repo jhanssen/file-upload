@@ -81,6 +81,7 @@ const ssh = new SSH2(ssh2settings);
 
 (async function() {
     await ssh.connect();
+    console.log(`connected to ${server}, getting sftp session`);
     const sftp = ssh.sftp();
 
     const upload = (file, dst) => {
