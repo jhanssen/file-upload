@@ -79,41 +79,66 @@ if (key) {
 
 const ssh = new SSH2(ssh2settings);
 
-(async function() {
-    await ssh.connect();
-    console.log(`connected to ${server}, getting sftp session`);
-    const sftp = ssh.sftp();
+class SFTP {
+    constructor() {
+        this.sftp = undefined;
+        this.timeout = options.int("timeout", 30000);
+    }
 
-    const retries = { timer: undefined, values: [] };
-    const retry = (file, dst) => {
-        if (!retries.timer) {
-            retries.timer = setTimeout(() => {
-                const v = retries.values;
+    connect() {
+        return new Promise((resolve, reject) => {
+            if (this.sftp) {
+                resolve(this.sftp);
+            } else {
+                ssh.connect().then(() => {
+                    setTimeout(() => {
+                        this.sftp = undefined;
+                    }, this.timeout);
+                    this.sftp = ssh.sftp();
+                    resolve(this.sftp);
+                }).catch(e => {
+                    reject(e);
+                });
+            }
+        });
+    }
+}
 
-                retries.timer = undefined;
-                retries.values = [];
+const sftp = new SFTP();
 
-                console.log(`retrying ${v.length} files`);
+const retries = { timer: undefined, values: [] };
+const retry = (file, dst, timeout) => {
+    if (!retries.timer) {
+        retries.timer = setTimeout(() => {
+            const v = retries.values;
 
-                for (let n = 0; n < v.length; ++n) {
-                    console.log("retrying", v[n].file, v[n].dst);
-                    upload(v[n].file, v[n].dst);
-                }
-            }, 1000);
-        }
-        retries.values.push({ file: file, dst: dst });
-    };
+            retries.timer = undefined;
+            retries.values = [];
 
-    const upload = (file, dst) => {
+            console.log(`retrying ${v.length} files`);
+
+            for (let n = 0; n < v.length; ++n) {
+                console.log("retrying", v[n].file, v[n].dst);
+                upload(v[n].file, v[n].dst, v[n].timeout);
+            }
+        }, timeout || 1000);
+    }
+    retries.values.push({ file: file, dst: dst, timeout: timeout });
+};
+
+const upload = (file, dst, timeout) => {
+    sftp.connect().then(connection => {
+        console.log(`connected to ${server}`);
+
         const fn = path.basename(file);
         let rs, ws;
         try {
-            sftp.createWriteStream(dstPath.join(dst, fn)).then(ws => {
+            connection.createWriteStream(dstPath.join(dst, fn)).then(ws => {
                 rs = fs.createReadStream(file);
                 rs.on("error", err => {
                     if (err.code === "EBUSY") {
                         console.log("file busy, retrying", file);
-                        retry(file, dst);
+                        retry(file, dst, timeout);
                     } else {
                         console.error("fs read error", err);
                     }
@@ -137,32 +162,35 @@ const ssh = new SSH2(ssh2settings);
                 rs.destroy();
             }
         }
-    };
+    }).catch(err => {
+        console.error("failed to connect to ssh", err);
+        retry(file, dst, 60000);
+    });
+};
 
-    const watcher = chokidar.watch(srcDir, {
-        ignoreInitial: true,
-        persistent: true,
-        ignored: /(^|[\/\\])\../
-    });
-    watcher.on("add", file => {
-        console.log("file added", file);
-        if (matches) {
-            for (let m = 0; m < matches.length; ++m) {
-                const match = matches[m];
-                if (!("regexp" in match) || !("subDir" in match)) {
-                    console.error("invalid match", match);
-                    continue;
-                }
-                const res = match.regexp.test(file);
-                if (res) {
-                    console.log("found match", file, match.subDir);
-                    upload(file, dstPath.join(dstDir, match.subDir));
-                    break;
-                }
+const watcher = chokidar.watch(srcDir, {
+    ignoreInitial: true,
+    persistent: true,
+    ignored: /(^|[\/\\])\../
+});
+watcher.on("add", file => {
+    console.log("file added", file);
+    if (matches) {
+        for (let m = 0; m < matches.length; ++m) {
+            const match = matches[m];
+            if (!("regexp" in match) || !("subDir" in match)) {
+                console.error("invalid match", match);
+                continue;
             }
-        } else {
-            // upload to dstDir
-            upload(file, dstDir);
+            const res = match.regexp.test(file);
+            if (res) {
+                console.log("found match", file, match.subDir);
+                upload(file, dstPath.join(dstDir, match.subDir));
+                break;
+            }
         }
-    });
-})();
+    } else {
+        // upload to dstDir
+        upload(file, dstDir);
+    }
+});
