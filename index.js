@@ -118,6 +118,10 @@ const ssh = new SSH2(ssh2settings);
                 ws.on("finish", () => {
                     console.log("uploaded", file);
                 });
+                ws.on("error", err => {
+                    console.error("sftp write error", err);
+                    rs.destroy();
+                });
                 console.log("uploading", file);
                 rs.pipe(ws);
             }).catch(e => {
