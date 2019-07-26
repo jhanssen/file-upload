@@ -93,7 +93,10 @@ const ssh = new SSH2(ssh2settings);
                 retries.timer = undefined;
                 retries.values = [];
 
+                console.log(`retrying ${v.length} files`);
+
                 for (let n = 0; n < v.length; ++n) {
+                    console.log("retrying", v[n].file, v[n].dst);
                     upload(v[n].file, v[n].dst);
                 }
             }, 1000);
@@ -109,6 +112,7 @@ const ssh = new SSH2(ssh2settings);
                 rs = fs.createReadStream(file);
                 rs.on("error", err => {
                     if (err.code === "EBUSY") {
+                        console.log("file busy, retrying", file);
                         retry(file, dst);
                     } else {
                         console.error("fs read error", err);
@@ -122,13 +126,13 @@ const ssh = new SSH2(ssh2settings);
                     console.error("sftp write error", err);
                     rs.destroy();
                 });
-                console.log("uploading", file);
+                console.log("uploading", file, dst);
                 rs.pipe(ws);
             }).catch(e => {
-                console.error("failed to upload", dstPath.join(dst, fn), e);
+                console.error("failed to upload (2)", dstPath.join(dst, fn), e);
             });
         } catch (e) {
-            console.error("failed to upload", file);
+            console.error("failed to upload (1)", file);
             if (rs) {
                 rs.destroy();
             }
