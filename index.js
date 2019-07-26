@@ -84,12 +84,34 @@ const ssh = new SSH2(ssh2settings);
     console.log(`connected to ${server}, getting sftp session`);
     const sftp = ssh.sftp();
 
+    const retries = { timer: undefined, values: [] };
+    const retry = (file, dst) => {
+        if (!retries.timer) {
+            retries.timer = setTimeout(() => {
+                for (let n = 0; n < retries.values.length; ++n) {
+                    upload(retries.values[n].file, retries.values[n].dst);
+                }
+                retries.timer = undefined;
+                retries.values = [];
+            }, 1000);
+        }
+        retries.values.push({ file: file, dst: dst });
+    };
+
     const upload = (file, dst) => {
         const fn = path.basename(file);
         let rs, ws;
         try {
             sftp.createWriteStream(dstPath.join(dst, fn)).then(ws => {
                 rs = fs.createReadStream(file);
+                rs.on("error", err => {
+                    if (err.code === "EBUSY") {
+                        retry(file, dst);
+                    } else {
+                        console.error("fs read error", err);
+                    }
+                    rs.destroy();
+                });
                 ws.on("finish", () => {
                     console.log("uploaded", file);
                 });
