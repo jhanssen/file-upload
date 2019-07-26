@@ -4,9 +4,31 @@ const path = require("path");
 const fs = require("fs");
 const SSH2 = require('ssh2-promise');
 
+const time = {
+    _time: function() {
+        var d = new Date();
+        var hours   = d.getHours();
+        var minutes = d.getMinutes();
+        var seconds = d.getSeconds();
+
+        if (hours   < 10) {hours   = "0"+hours;}
+        if (minutes < 10) {minutes = "0"+minutes;}
+        if (seconds < 10) {seconds = "0"+seconds;}
+
+        return "["+hours+":"+minutes+":"+seconds+"]";
+    },
+
+    log: function(...args) {
+        console.log(time._time(), ...args);
+    },
+    error: function(...args) {
+        console.error(time._time(), ...args);
+    }
+};
+
 const server = options("server");
 if (!server) {
-    console.error("No ssh2 server configured");
+    time.error("No ssh2 server configured");
     process.exit(1);
 }
 const port = options.int("port", 22);
@@ -14,53 +36,53 @@ const username = options("user");
 const password = options("password");
 const key = options("key");
 if (!username) {
-    console.error("No user configured");
+    time.error("No user configured");
     process.exit(1);
 }
 if (!password && !key) {
-    console.error("No password or key configured");
+    time.error("No password or key configured");
     process.exit(1);
 }
 const srcDir = options("srcDir");
 if (!srcDir) {
-    console.error("No directory to watch configured");
+    time.error("No directory to watch configured");
     process.exit(1);
 }
 const dstDir = options("dstDir");
 if (!dstDir) {
-    console.error("No directory to upload to configured");
+    time.error("No directory to upload to configured");
     process.exit(1);
 }
 const dstSystem = options("dstSystem", "posix");
 if (dstSystem !== "posix" && dstSystem != "win32") {
-    console.error("Invalid dstSystem", dstSystem);
+    time.error("Invalid dstSystem", dstSystem);
     process.exit(1);
 }
 const dstPath = path[dstSystem];
 
 const matches = options("matches");
 if (matches !== undefined && !(matches instanceof Array)) {
-    console.error("matches needs to be undefined or an array");
+    time.error("matches needs to be undefined or an array");
     process.exit(1);
 }
 if (matches) {
     for (let m = 0; m < matches.length; ++m) {
         const match = matches[m];
         if (!("regexp" in match)) {
-            console.error("invalid match", match);
+            time.error("invalid match", match);
             continue;
         }
         if (typeof match.regexp === "string") {
             try {
                 match.regexp = new RegExp(match.regexp);
             } catch (e) {
-                console.error("match has invalid regexp", match, e);
+                time.error("match has invalid regexp", match, e);
                 delete match.regexp;
                 continue;
             }
         }
         if (!(match.regexp instanceof RegExp)) {
-            console.error("invalid match", match);
+            time.error("invalid match", match);
             delete match.regexp;
         }
     }
@@ -131,10 +153,10 @@ const retry = (file, dst, timeout) => {
             retries.timer = undefined;
             retries.values = [];
 
-            console.log(`retrying ${v.length} files`);
+            time.log(`retrying ${v.length} files`);
 
             for (let n = 0; n < v.length; ++n) {
-                console.log("retrying", v[n].file, v[n].dst);
+                time.log("retrying", v[n].file, v[n].dst);
                 upload(v[n].file, v[n].dst, v[n].timeout);
             }
         }, timeout || 1000);
@@ -144,7 +166,7 @@ const retry = (file, dst, timeout) => {
 
 const upload = (file, dst, timeout) => {
     sftp.connect().then(connection => {
-        console.log(`connected to ${server}`);
+        time.log(`connected to ${server}`);
 
         const fn = path.basename(file);
         let rs, ws;
@@ -153,33 +175,33 @@ const upload = (file, dst, timeout) => {
                 rs = fs.createReadStream(file);
                 rs.on("error", err => {
                     if (err.code === "EBUSY") {
-                        console.log("file busy, retrying", file);
+                        time.log("file busy, retrying", file);
                         retry(file, dst, timeout);
                     } else {
-                        console.error("fs read error", err);
+                        time.error("fs read error", err);
                     }
                     rs.destroy();
                 });
                 ws.on("finish", () => {
-                    console.log("uploaded", file);
+                    time.log("uploaded", file);
                 });
                 ws.on("error", err => {
-                    console.error("sftp write error", err);
+                    time.error("sftp write error", err);
                     rs.destroy();
                 });
-                console.log("uploading", file, dst);
+                time.log("uploading", file, dst);
                 rs.pipe(ws);
             }).catch(e => {
-                console.error("failed to upload (2)", dstPath.join(dst, fn), e);
+                time.error("failed to upload (2)", dstPath.join(dst, fn), e);
             });
         } catch (e) {
-            console.error("failed to upload (1)", file);
+            time.error("failed to upload (1)", file);
             if (rs) {
                 rs.destroy();
             }
         }
     }).catch(err => {
-        console.error("failed to connect to ssh", err);
+        time.error("failed to connect to ssh", err);
         retry(file, dst, 60000);
     });
 };
@@ -190,18 +212,18 @@ const watcher = chokidar.watch(srcDir, {
     ignored: /(^|[\/\\])\../
 });
 watcher.on("add", file => {
-    console.log("file added", file);
+    time.log("file added", file);
     let uploaded = false;
     if (matches) {
         for (let m = 0; m < matches.length; ++m) {
             const match = matches[m];
             if (!("regexp" in match) || !("subDir" in match)) {
-                console.error("invalid match", match);
+                time.error("invalid match", match);
                 continue;
             }
             const res = match.regexp.test(file);
             if (res) {
-                console.log("found match", file, match.subDir);
+                time.log("found match", file, match.subDir);
                 upload(file, dstPath.join(dstDir, match.subDir));
                 uploaded = true;
                 break;
