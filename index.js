@@ -175,6 +175,7 @@ const watcher = chokidar.watch(srcDir, {
 });
 watcher.on("add", file => {
     console.log("file added", file);
+    let uploaded = false;
     if (matches) {
         for (let m = 0; m < matches.length; ++m) {
             const match = matches[m];
@@ -186,10 +187,12 @@ watcher.on("add", file => {
             if (res) {
                 console.log("found match", file, match.subDir);
                 upload(file, dstPath.join(dstDir, match.subDir));
+                uploaded = true;
                 break;
             }
         }
-    } else {
+    }
+    if (!uploaded) {
         // upload to dstDir
         upload(file, dstDir);
     }
