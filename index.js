@@ -88,11 +88,14 @@ const ssh = new SSH2(ssh2settings);
     const retry = (file, dst) => {
         if (!retries.timer) {
             retries.timer = setTimeout(() => {
-                for (let n = 0; n < retries.values.length; ++n) {
-                    upload(retries.values[n].file, retries.values[n].dst);
-                }
+                const v = retries.values;
+
                 retries.timer = undefined;
                 retries.values = [];
+
+                for (let n = 0; n < v.length; ++n) {
+                    upload(v[n].file, v[n].dst);
+                }
             }, 1000);
         }
         retries.values.push({ file: file, dst: dst });
