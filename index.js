@@ -82,6 +82,7 @@ const ssh = new SSH2(ssh2settings);
 class SFTP {
     constructor() {
         this.sftp = undefined;
+        this.closing = undefined;
         this.timeout = options.int("timeout", 30000);
     }
 
@@ -90,16 +91,31 @@ class SFTP {
             if (this.sftp) {
                 resolve(this.sftp);
             } else {
-                ssh.connect().then(() => {
-                    setTimeout(() => {
-                        this.sftp = undefined;
-                    }, this.timeout);
-                    this.sftp = ssh.sftp();
-                    resolve(this.sftp);
-                }).catch(e => {
-                    reject(e);
-                });
+                if (this.closing) {
+                    this.closing.then(() => {
+                        this._internalConnect(resolve, reject);
+                    }).catch(err => {
+                        reject(err);
+                    });
+                } else {
+                    this._internalConnect(resolve, reject);
+                }
             }
+        });
+    }
+
+    _internalConnect(resolve, reject) {
+        ssh.connect().then(() => {
+            setTimeout(() => {
+                this.closing = new Promise((resolve, reject) => {
+                    ssh.close().then(() => { resolve(); this.closing = undefined; }).catch(err => { reject(err); this.closing = undefined; });
+                });
+                this.sftp = undefined;
+            }, this.timeout);
+            this.sftp = ssh.sftp();
+            resolve(this.sftp);
+        }).catch(e => {
+            reject(e);
         });
     }
 }
