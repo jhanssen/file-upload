@@ -167,6 +167,26 @@ const retry = (file, dst, timeout) => {
     retries.values.push({ file: file, dst: dst, timeout: timeout });
 };
 
+const uploads = {
+    go: function(file, rs, ps, ws) {
+        uploads[file] = { rs: rs, ps: ps, ws: ws };
+        ws.on("finish", () => {
+            time.log("uploaded", file);
+            delete uploads[file];
+        });
+        rs.pipe(ps).pipe(ws);
+    },
+    clear: function(file) {
+        if (!(file in uploads)) {
+            time.error("no upload named", file);
+            return;
+        }
+        const rs = uploads[file].rs;
+        rs.destroy();
+        delete uploads[file];
+    }
+};
+
 const upload = (file, dst, timeout) => {
     sftp.connect().then(connection => {
         time.log(`connected to ${server}`);
@@ -210,17 +230,14 @@ const upload = (file, dst, timeout) => {
                         } else {
                             time.error("fs read error", err);
                         }
-                        rs.destroy();
-                    });
-                    ws.on("finish", () => {
-                        time.log("uploaded", file);
+                        uploads.clear(file);
                     });
                     ws.on("error", err => {
                         time.error("sftp write error", err);
-                        rs.destroy();
+                        uploads.clear(file);
                     });
                     time.log("uploading", file, dst);
-                    rs.pipe(ps).pipe(ws);
+                    uploads.go(file, rs, ps, ws);
                 });
             }).catch(e => {
                 time.error("failed to upload (2)", dstPath.join(dst, fn), e);
