@@ -2,6 +2,7 @@ const options = require("@jhanssen/options")("file-upload");
 const chokidar = require("chokidar");
 const path = require("path");
 const fs = require("fs");
+const progress = require("progress-stream");
 const SSH2 = require('ssh2-promise');
 
 const time = {
@@ -169,28 +170,48 @@ const upload = (file, dst, timeout) => {
         time.log(`connected to ${server}`);
 
         const fn = path.basename(file);
-        let rs, ws;
+        let rs;
         try {
             connection.createWriteStream(dstPath.join(dst, fn)).then(ws => {
-                rs = fs.createReadStream(file);
-                rs.on("error", err => {
-                    if (err.code === "EBUSY") {
-                        time.log("file busy, retrying", file);
-                        retry(file, dst, timeout);
-                    } else {
-                        time.error("fs read error", err);
+                fs.stat(file, (err, stats) => {
+                    if (err) {
+                        if (err.code === "EBUSY") {
+                            time.log("file busy (stat), retrying", file);
+                            retry(file, dst, timeout);
+                        } else {
+                            time.error("fs stat error", err);
+                        }
+                        return;
                     }
-                    rs.destroy();
+                    if (!stats.size) {
+                        time.log("file empty, retrying", file);
+                        retry(file, dst, timeout);
+                        return;
+                    }
+                    const ps = progress({ length: stats.size, time: 1000 });
+                    ps.on("progress", progress => {
+                        time.log("progress", progress.percentage, file, dst);
+                    });
+                    rs = fs.createReadStream(file);
+                    rs.on("error", err => {
+                        if (err.code === "EBUSY") {
+                            time.log("file busy (read stream), retrying", file);
+                            retry(file, dst, timeout);
+                        } else {
+                            time.error("fs read error", err);
+                        }
+                        rs.destroy();
+                    });
+                    ws.on("finish", () => {
+                        time.log("uploaded", file);
+                    });
+                    ws.on("error", err => {
+                        time.error("sftp write error", err);
+                        rs.destroy();
+                    });
+                    time.log("uploading", file, dst);
+                    rs.pipe(ps).pipe(ws);
                 });
-                ws.on("finish", () => {
-                    time.log("uploaded", file);
-                });
-                ws.on("error", err => {
-                    time.error("sftp write error", err);
-                    rs.destroy();
-                });
-                time.log("uploading", file, dst);
-                rs.pipe(ws);
             }).catch(e => {
                 time.error("failed to upload (2)", dstPath.join(dst, fn), e);
             });
