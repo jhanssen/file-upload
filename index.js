@@ -61,6 +61,8 @@ if (dstSystem !== "posix" && dstSystem != "win32") {
 }
 const dstPath = path[dstSystem];
 
+const debugStream = options("debugStream");
+
 const matches = options("matches");
 if (matches !== undefined && !(matches instanceof Array)) {
     time.error("matches needs to be undefined or an array");
@@ -172,7 +174,15 @@ const upload = (file, dst, timeout) => {
         const fn = path.basename(file);
         let rs;
         try {
-            connection.createWriteStream(dstPath.join(dst, fn)).then(ws => {
+            const wsOptions = {
+                flags: "w",
+                encoding: null,
+                mode: 0o666,
+                autoClose: true
+            };
+            if (debugStream)
+                wsOptions.debug = console.log;
+            connection.createWriteStream(dstPath.join(dst, fn), wsOptions).then(ws => {
                 fs.stat(file, (err, stats) => {
                     if (err) {
                         if (err.code === "EBUSY") {
