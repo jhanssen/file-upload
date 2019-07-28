@@ -168,11 +168,23 @@ const retry = (file, dst, timeout) => {
 };
 
 const uploads = {
+    _values: {},
+    init: function() {
+        setTimeout(() => {
+            const n = Date.now();
+            for (let v in uploads._values) {
+                const val = uploads._values[v];
+                if (n - val.ts >= 60000) {
+                    time.log("not uploaded", v, n - val.ts);
+                }
+            }
+        }, 10000);
+    },
     go: function(file, rs, ps, ws) {
-        uploads[file] = { rs: rs, ps: ps, ws: ws };
+        uploads._values[file] = { rs: rs, ps: ps, ws: ws, ts: Date.now() };
         ws.on("finish", () => {
             time.log("uploaded", file);
-            delete uploads[file];
+            delete uploads._values[file];
         });
         rs.pipe(ps).pipe(ws);
     },
@@ -181,11 +193,13 @@ const uploads = {
             time.error("no upload named", file);
             return;
         }
-        const rs = uploads[file].rs;
+        const rs = uploads._values[file].rs;
         rs.destroy();
-        delete uploads[file];
+        delete uploads._values[file];
     }
 };
+
+uploads.init();
 
 const upload = (file, dst, timeout) => {
     sftp.connect().then(connection => {
