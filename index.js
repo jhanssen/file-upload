@@ -102,10 +102,9 @@ if (key) {
     ssh2settings.password = password;
 }
 
-const ssh = new SSH2(ssh2settings);
-
 class SFTP {
     constructor() {
+        this.ssh = undefined;
         this.sftp = undefined;
         this.closing = undefined;
         this.timeout = options.int("timeout", 30000);
@@ -130,14 +129,18 @@ class SFTP {
     }
 
     _internalConnect(resolve, reject) {
-        ssh.connect().then(() => {
+        if (this.ssh === undefined)
+            this.ssh = new SSH2(ssh2settings);
+        this.ssh.connect().then(() => {
             setTimeout(() => {
+                const ssh = this.ssh;
                 this.closing = new Promise((resolve, reject) => {
                     ssh.close().then(() => { resolve(); this.closing = undefined; }).catch(err => { reject(err); this.closing = undefined; });
                 });
                 this.sftp = undefined;
+                this.ssh = undefined;
             }, this.timeout);
-            this.sftp = ssh.sftp();
+            this.sftp = this.ssh.sftp();
             resolve(this.sftp);
         }).catch(e => {
             reject(e);
@@ -170,7 +173,7 @@ const retry = (file, dst, timeout) => {
 const uploads = {
     _values: {},
     init: function() {
-        setTimeout(() => {
+        setInterval(() => {
             const n = Date.now();
             for (let v in uploads._values) {
                 const val = uploads._values[v];
