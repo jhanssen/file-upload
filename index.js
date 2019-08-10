@@ -68,6 +68,10 @@ if (matches !== undefined && !(matches instanceof Array)) {
     time.error("matches needs to be undefined or an array");
     process.exit(1);
 }
+
+const reconnectTimeout = options.int("reconnect-timeout", 30000);
+const reuploadTimeout = options.int("reupload-timeout", 60000 * 10);
+
 if (matches) {
     for (let m = 0; m < matches.length; ++m) {
         const match = matches[m];
@@ -107,7 +111,6 @@ class SFTP {
         this.ssh = undefined;
         this.sftp = undefined;
         this.closing = undefined;
-        this.timeout = options.int("timeout", 30000);
     }
 
     connect() {
@@ -139,7 +142,7 @@ class SFTP {
                 });
                 this.sftp = undefined;
                 this.ssh = undefined;
-            }, this.timeout);
+            }, reconnectTimeout);
             this.sftp = this.ssh.sftp();
             resolve(this.sftp);
         }).catch(e => {
@@ -175,16 +178,22 @@ const uploads = {
     init: function() {
         setInterval(() => {
             const n = Date.now();
-            for (let v in uploads._values) {
-                const val = uploads._values[v];
-                if (n - val.ts >= 60000) {
-                    time.log("not uploaded", v, n - val.ts);
+            for (let file in uploads._values) {
+                const val = uploads._values[file];
+                if (n - val.ts >= reuploadTimeout) {
+                    const v = uploads._values[file];
+                    delete uploads._values[file];
+
+                    time.log("retrying due to timeout", file);
+                    retry(file, v.dst, v.timeout);
+                } else if (n - val.ts >= 60000) {
+                    time.log("not uploaded", file, n - val.ts);
                 }
             }
         }, 10000);
     },
-    go: function(file, rs, ps, ws) {
-        uploads._values[file] = { rs: rs, ps: ps, ws: ws, ts: Date.now() };
+    go: function(file, dst, timeout, rs, ps, ws) {
+        uploads._values[file] = { dst: dst, timeout: timeout, rs: rs, ps: ps, ws: ws, ts: Date.now() };
         ws.on("finish", () => {
             time.log("uploaded", file);
             delete uploads._values[file];
@@ -254,7 +263,7 @@ const upload = (file, dst, timeout) => {
                         uploads.clear(file);
                     });
                     time.log("uploading", file, dst);
-                    uploads.go(file, rs, ps, ws);
+                    uploads.go(file, dst, timeout, rs, ps, ws);
                 });
             }).catch(e => {
                 time.error("failed to upload (2)", dstPath.join(dst, fn), e);
