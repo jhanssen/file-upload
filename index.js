@@ -182,6 +182,7 @@ const uploads = {
                 const val = uploads._values[file];
                 if (n - val.ts >= reuploadTimeout) {
                     const v = uploads._values[file];
+                    v.rs.destroy();
                     delete uploads._values[file];
 
                     time.log("retrying due to timeout", file);
