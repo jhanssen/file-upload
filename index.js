@@ -138,7 +138,16 @@ class SFTP {
             setTimeout(() => {
                 const ssh = this.ssh;
                 this.closing = new Promise((resolve, reject) => {
-                    ssh.close().then(() => { resolve(); this.closing = undefined; }).catch(err => { reject(err); this.closing = undefined; });
+                    // make sure that this is async
+                    process.nextTick(() => {
+                        ssh.close().then(() => {
+                            resolve();
+                            this.closing = undefined;
+                        }).catch(err => {
+                            reject(err);
+                            this.closing = undefined;
+                        });
+                    });
                 });
                 this.sftp = undefined;
                 this.ssh = undefined;
