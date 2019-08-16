@@ -178,7 +178,7 @@ const uploads = {
         if (this._uploads.length === 0)
             return;
         this._upload().then(() => {
-            console.log("upload complete", this._upload[0].file);
+            console.log("upload complete", this._uploads[0].file);
             this._uploads.splice(0, 1);
             this._next();
         }).catch(err => {
@@ -253,7 +253,7 @@ const uploads = {
                     reject(`failed to upload (2) ${dstPath.join(dst, fn)}, ${e}`);
                 });
             } catch (e) {
-                reject(`failed to upload (1) ${file}`);
+                reject(`failed to upload (1) ${file} ${e}`);
             }
         });
     }
