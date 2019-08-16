@@ -178,11 +178,11 @@ const uploads = {
         if (this._uploads.length === 0)
             return;
         this._upload().then(() => {
-            console.log("upload complete", this._uploads[0].file);
+            time.log("upload complete", this._uploads[0].file);
             this._uploads.splice(0, 1);
             this._next();
         }).catch(err => {
-            console.log("upload failed", err);
+            time.error("upload failed", err);
             if (this._uploads[0].stream) {
                 this._uploads[0].stream.rs.destroy();
                 delete this._uploads[0].stream;
