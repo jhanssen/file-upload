@@ -106,27 +106,18 @@ if (key) {
     ssh2settings.password = password;
 }
 
-class SFTP {
+class Connection {
     constructor() {
         this.ssh = undefined;
         this.sftp = undefined;
-        this.closing = undefined;
     }
 
     connect() {
         return new Promise((resolve, reject) => {
-            if (this.sftp) {
-                resolve(this.sftp);
+            if (this.ssh && this.sftp) {
+                resolve({ sftp: this.sftp, ssh: this.ssh });
             } else {
-                if (this.closing) {
-                    this.closing.then(() => {
-                        this._internalConnect(resolve, reject);
-                    }).catch(err => {
-                        reject(err);
-                    });
-                } else {
-                    this._internalConnect(resolve, reject);
-                }
+                this._internalConnect(resolve, reject);
             }
         });
     }
@@ -136,159 +127,138 @@ class SFTP {
             this.ssh = new SSH2(ssh2settings);
         this.ssh.connect().then(() => {
             setTimeout(() => {
-                const ssh = this.ssh;
-                this.closing = new Promise((resolve, reject) => {
-                    // make sure that this is async
-                    process.nextTick(() => {
-                        ssh.close().then(() => {
-                            resolve();
-                            this.closing = undefined;
-                        }).catch(err => {
-                            reject(err);
-                            this.closing = undefined;
-                        });
-                    });
-                });
                 this.sftp = undefined;
                 this.ssh = undefined;
             }, reconnectTimeout);
             this.sftp = this.ssh.sftp();
-            resolve(this.sftp);
+            resolve({ sftp: this.sftp, ssh: this.ssh });
         }).catch(e => {
             reject(e);
         });
     }
 }
 
-const sftp = new SFTP();
-
-const retries = { timer: undefined, values: [] };
-const retry = (file, dst, timeout) => {
-    if (!retries.timer) {
-        retries.timer = setTimeout(() => {
-            const v = retries.values;
-
-            retries.timer = undefined;
-            retries.values = [];
-
-            time.log(`retrying ${v.length} files`);
-
-            for (let n = 0; n < v.length; ++n) {
-                time.log("retrying", v[n].file, v[n].dst);
-                upload(v[n].file, v[n].dst, v[n].timeout);
-            }
-        }, timeout || 1000);
-    }
-    retries.values.push({ file: file, dst: dst, timeout: timeout });
-};
+const connection = new Connection();
 
 const uploads = {
-    _values: {},
+    _uploads: [],
+    _connection: undefined,
+
     init: function() {
         setInterval(() => {
-            const n = Date.now();
-            for (let file in uploads._values) {
-                const val = uploads._values[file];
-                if (n - val.ts >= reuploadTimeout) {
-                    const v = uploads._values[file];
-                    v.rs.destroy();
-                    delete uploads._values[file];
-
-                    time.log("retrying due to timeout", file);
-                    retry(file, v.dst, v.timeout);
-                } else if (n - val.ts >= 60000) {
-                    time.log("not uploaded", file, n - val.ts);
+            if (this._uploads.length > 0 && this._uploads[0].stream !== undefined) {
+                const delta = Date.now() - this._uploads[0].stream.ts;
+                if (delta >= 30000) {
+                    time.log("still uploading", this._uploads[0].file);
+                }
+                if (delta >= reuploadTimeout) {
+                    this._uploads[0].stream.reject(`upload timeout ${this._uploads[0].file}`);
                 }
             }
         }, 10000);
     },
-    go: function(file, dst, timeout, rs, ps, ws) {
-        uploads._values[file] = { dst: dst, timeout: timeout, rs: rs, ps: ps, ws: ws, ts: Date.now() };
-        ws.on("finish", () => {
-            time.log("uploaded", file);
-            delete uploads._values[file];
-        });
-        rs.pipe(ps).pipe(ws);
-    },
-    clear: function(file) {
-        if (!(file in uploads)) {
-            time.error("no upload named", file);
-            return;
+
+    add: function(file, dst) {
+        this._uploads.push({ file: file, dst: dst });
+        if (!this._connection) {
+            connection.connect().then(c => {
+                this._connection = c;
+                this._next();
+
+                setTimeout(() => {
+                    this._connection = undefined;
+                }, reconnectTimeout);
+            });
+        } else {
+            this._next();
         }
-        const rs = uploads._values[file].rs;
-        rs.destroy();
-        delete uploads._values[file];
+    },
+
+    _next: function() {
+        if (this._uploads.length === 0)
+            return;
+        this._upload().then(() => {
+            console.log("upload complete", this._upload[0].file);
+            this._uploads.splice(0, 1);
+            this._next();
+        }).catch(err => {
+            console.log("upload failed", err);
+            if (this._uploads[0].stream) {
+                this._uploads[0].stream.rs.destroy();
+                delete this._uploads[0].stream;
+            }
+            this._retryLater();
+        });
+    },
+
+    _retryLater: function() {
+        setTimeout(() => {
+            this._next();
+        }, 60000);
+    },
+
+    _upload: function() {
+        return new Promise((resolve, reject) => {
+            const upload = this._uploads[0];
+            const file = upload.file;
+            const dst = upload.dst;
+
+            const fn = path.basename(file);
+            let rs;
+            try {
+                const wsOptions = {
+                    flags: "w",
+                    encoding: null,
+                    mode: 0o666,
+                    autoClose: true
+                };
+                if (debugStream)
+                    wsOptions.debug = console.log;
+                this._connection.sftp.createWriteStream(dstPath.join(dst, fn), wsOptions).then(ws => {
+                    fs.stat(file, (err, stats) => {
+                        if (err) {
+                            if (err.code === "EBUSY") {
+                                reject(`file busy (stat), retrying ${file}`);
+                            } else {
+                                reject(`fs stat error ${file}, ${err}`);
+                            }
+                            return;
+                        }
+                        if (!stats.size) {
+                            reject(`file empty, retrying ${file}`);
+                            return;
+                        }
+                        const ps = progress({ length: stats.size, time: 1000 });
+                        ps.on("progress", progress => {
+                            time.log("progress", progress.percentage, file, dst);
+                        });
+                        rs = fs.createReadStream(file);
+                        rs.on("error", err => {
+                            if (err.code === "EBUSY") {
+                                reject(`file busy (read stream), retrying ${file}`);
+                            } else {
+                                reject(`fs read error ${file} ${err}`);
+                            }
+                        });
+                        ws.on("error", err => {
+                            reject(`sftp write error ${file} ${err}`);
+                        });
+                        ws.on("finish", () => {
+                            resolve(`finished uploading ${file}`);
+                        });
+                        upload.stream = { rs: rs, ws: ws, ps: ps, ts: Date.now(), resolve: resolve, reject: reject };
+                    });
+                }).catch(e => {
+                    reject(`failed to upload (2) ${dstPath.join(dst, fn)}, ${e}`);
+                });
+            } catch (e) {
+                reject(`failed to upload (1) ${file}`);
+            }
+        });
     }
 };
 
 uploads.init();
-
-const upload = (file, dst, timeout) => {
-    sftp.connect().then(connection => {
-        time.log(`connected to ${server}`);
-
-        const fn = path.basename(file);
-        let rs;
-        try {
-            const wsOptions = {
-                flags: "w",
-                encoding: null,
-                mode: 0o666,
-                autoClose: true
-            };
-            if (debugStream)
-                wsOptions.debug = console.log;
-            connection.createWriteStream(dstPath.join(dst, fn), wsOptions).then(ws => {
-                fs.stat(file, (err, stats) => {
-                    if (err) {
-                        if (err.code === "EBUSY") {
-                            time.log("file busy (stat), retrying", file);
-                            retry(file, dst, timeout);
-                        } else {
-                            time.error("fs stat error", err);
-                        }
-                        return;
-                    }
-                    if (!stats.size) {
-                        time.log("file empty, retrying", file);
-                        retry(file, dst, timeout);
-                        return;
-                    }
-                    const ps = progress({ length: stats.size, time: 1000 });
-                    ps.on("progress", progress => {
-                        time.log("progress", progress.percentage, file, dst);
-                    });
-                    rs = fs.createReadStream(file);
-                    rs.on("error", err => {
-                        if (err.code === "EBUSY") {
-                            time.log("file busy (read stream), retrying", file);
-                            retry(file, dst, timeout);
-                        } else {
-                            time.error("fs read error", err);
-                        }
-                        uploads.clear(file);
-                    });
-                    ws.on("error", err => {
-                        time.error("sftp write error", err);
-                        uploads.clear(file);
-                    });
-                    time.log("uploading", file, dst);
-                    uploads.go(file, dst, timeout, rs, ps, ws);
-                });
-            }).catch(e => {
-                time.error("failed to upload (2)", dstPath.join(dst, fn), e);
-            });
-        } catch (e) {
-            time.error("failed to upload (1)", file);
-            if (rs) {
-                rs.destroy();
-            }
-        }
-    }).catch(err => {
-        time.error("failed to connect to ssh", err);
-        retry(file, dst, 60000);
-    });
-};
 
 const watcher = chokidar.watch(srcDir, {
     ignoreInitial: true,
@@ -308,7 +278,7 @@ watcher.on("add", file => {
             const res = match.regexp.test(file);
             if (res) {
                 time.log("found match", file, match.subDir);
-                upload(file, dstPath.join(dstDir, match.subDir));
+                uploads.add(file, dstPath.join(dstDir, match.subDir));
                 uploaded = true;
                 break;
             }
@@ -316,6 +286,6 @@ watcher.on("add", file => {
     }
     if (!uploaded) {
         // upload to dstDir
-        upload(file, dstDir);
+        uploads.add(file, dstDir);
     }
 });
