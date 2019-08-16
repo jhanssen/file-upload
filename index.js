@@ -247,6 +247,7 @@ const uploads = {
                             resolve(`finished uploading ${file}`);
                         });
                         upload.stream = { rs: rs, ws: ws, ps: ps, ts: Date.now(), resolve: resolve, reject: reject };
+                        rs.pipe(ps).pipe(ws);
                     });
                 }).catch(e => {
                     reject(`failed to upload (2) ${dstPath.join(dst, fn)}, ${e}`);
