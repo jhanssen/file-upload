@@ -175,6 +175,7 @@ const uploads = {
 
     add: function(file, dst) {
         this._uploads.push({ file: file, dst: dst });
+        time.log(`added ${file}, now got ${this._uploads.length} uploads`);
         if (this._uploads.length > 1) {
             // we'll start this upload after the current one is complete
             return;
@@ -185,14 +186,16 @@ const uploads = {
     },
 
     _next: function() {
+        time.log(`processing, got ${this._uploads.length} uploads remaining`);
         if (this._uploads.length === 0)
             return;
+        time.log(`processing file ${this._uploads[0].file}`);
         this._upload().then(() => {
-            time.log("upload complete", this._uploads[0].file);
+            time.log(`upload complete ${this._uploads[0].file}, got ${this._uploads.length - 1} uploads left`);
             this._uploads.splice(0, 1);
             this._next();
         }).catch(err => {
-            time.error("upload failed", err);
+            time.error("upload failed", this._uploads[0].file, err);
             if (this._uploads[0].stream) {
                 this._uploads[0].stream.rs.destroy();
                 delete this._uploads[0].stream;
@@ -202,6 +205,7 @@ const uploads = {
     },
 
     _retryLater: function() {
+        time.log("retrying later");
         setTimeout(() => {
             this._next();
         }, 60000);
