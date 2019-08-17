@@ -160,6 +160,10 @@ const uploads = {
 
     add: function(file, dst) {
         this._uploads.push({ file: file, dst: dst });
+        if (this._uploads.length > 1) {
+            // we'll start this upload after the current one is complete
+            return;
+        }
         if (!this._connection) {
             connection.connect().then(c => {
                 this._connection = c;
