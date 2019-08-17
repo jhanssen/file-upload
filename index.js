@@ -158,24 +158,30 @@ const uploads = {
         }, 10000);
     },
 
+    connection: function() {
+        return new Promise((resolve, reject) => {
+            if (this._connection)
+                resolve(this._connection);
+            connection.connect().then(c => {
+                this._connection = c;
+                resolve(this._connection);
+
+                setTimeout(() => {
+                    this._connection = undefined;
+                }, reconnectTimeout);
+            });
+        });
+    },
+
     add: function(file, dst) {
         this._uploads.push({ file: file, dst: dst });
         if (this._uploads.length > 1) {
             // we'll start this upload after the current one is complete
             return;
         }
-        if (!this._connection) {
-            connection.connect().then(c => {
-                this._connection = c;
-                this._next();
-
-                setTimeout(() => {
-                    this._connection = undefined;
-                }, reconnectTimeout);
-            });
-        } else {
+        this.connection().then(() => {
             this._next();
-        }
+        });
     },
 
     _next: function() {
@@ -218,43 +224,46 @@ const uploads = {
                 };
                 if (debugStream)
                     wsOptions.debug = console.log;
-                this._connection.sftp.createWriteStream(dstPath.join(dst, fn), wsOptions).then(ws => {
-                    fs.stat(file, (err, stats) => {
-                        if (err) {
-                            if (err.code === "EBUSY") {
-                                reject(`file busy (stat), retrying ${file}`);
-                            } else {
-                                reject(`fs stat error ${file}, ${err}`);
+                this.connection().then(c => {
+                    c.sftp.createWriteStream(dstPath.join(dst, fn), wsOptions).then(ws => {
+                        fs.stat(file, (err, stats) => {
+                            if (err) {
+                                if (err.code === "EBUSY") {
+                                    reject(`file busy (stat), retrying ${file}`);
+                                } else {
+                                    reject(`fs stat error ${file}, ${err}`);
+                                }
+                                return;
                             }
-                            return;
-                        }
-                        if (!stats.size) {
-                            reject(`file empty, retrying ${file}`);
-                            return;
-                        }
-                        const ps = progress({ length: stats.size, time: 1000 });
-                        ps.on("progress", progress => {
-                            time.log("progress", progress.percentage, file, dst);
-                        });
-                        rs = fs.createReadStream(file);
-                        rs.on("error", err => {
-                            if (err.code === "EBUSY") {
-                                reject(`file busy (read stream), retrying ${file}`);
-                            } else {
-                                reject(`fs read error ${file} ${err}`);
+                            if (!stats.size) {
+                                reject(`file empty, retrying ${file}`);
+                                return;
                             }
+                            const ps = progress({ length: stats.size, time: 1000 });
+                            ps.on("progress", progress => {
+                                time.log("progress", progress.percentage, file, dst);
+                            });
+                            rs = fs.createReadStream(file);
+                            rs.on("error", err => {
+                                if (err.code === "EBUSY") {
+                                    reject(`file busy (read stream), retrying ${file}`);
+                                } else {
+                                    reject(`fs read error ${file} ${err}`);
+                                }
+                            });
+                            ws.on("error", err => {
+                                reject(`sftp write error ${file} ${err}`);
+                            });
+                            ws.on("finish", () => {
+                                resolve(`finished uploading ${file}`);
+                            });
+                            time.log("starting upload", file);
+                            upload.stream = { rs: rs, ws: ws, ps: ps, ts: Date.now(), resolve: resolve, reject: reject };
+                            rs.pipe(ps).pipe(ws);
                         });
-                        ws.on("error", err => {
-                            reject(`sftp write error ${file} ${err}`);
-                        });
-                        ws.on("finish", () => {
-                            resolve(`finished uploading ${file}`);
-                        });
-                        upload.stream = { rs: rs, ws: ws, ps: ps, ts: Date.now(), resolve: resolve, reject: reject };
-                        rs.pipe(ps).pipe(ws);
+                    }).catch(e => {
+                        reject(`failed to upload (2) ${dstPath.join(dst, fn)}, ${e}`);
                     });
-                }).catch(e => {
-                    reject(`failed to upload (2) ${dstPath.join(dst, fn)}, ${e}`);
                 });
             } catch (e) {
                 reject(`failed to upload (1) ${file} ${e}`);
