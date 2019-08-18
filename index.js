@@ -152,7 +152,7 @@ const uploads = {
                     time.log("still uploading", this._uploads[0].file);
                 }
                 if (delta >= reuploadTimeout) {
-                    this._uploads[0].stream.reject(`upload timeout ${this._uploads[0].file}`);
+                    this._uploads[0].stream.reject({ message: `upload timeout ${this._uploads[0].file}`, retry: true });
                 }
             }
         }, 10000);
@@ -195,12 +195,23 @@ const uploads = {
             this._uploads.splice(0, 1);
             this._next();
         }).catch(err => {
-            time.error("upload failed", this._uploads[0].file, err);
+            const retry = (typeof err === "object" && err.retry === true);
+            const message = (typeof err === "object" && err.message) || err;
+            time.error("upload failed", this._uploads[0].file, message);
             if (this._uploads[0].stream) {
                 this._uploads[0].stream.rs.destroy();
                 delete this._uploads[0].stream;
             }
-            this._retryLater();
+            if (retry) {
+                time.log("retrying");
+                this._retryLater();
+            } else {
+                time.log("not retrying");
+                this._uploads.splice(0, 1);
+                process.nextTick(() => {
+                    this._next();
+                });
+            }
         });
     },
 
@@ -233,7 +244,7 @@ const uploads = {
                         fs.stat(file, (err, stats) => {
                             if (err) {
                                 if (err.code === "EBUSY") {
-                                    reject(`file busy (stat), retrying ${file}`);
+                                    reject({ message: `file busy (stat), retrying ${file}`, retry: true });
                                 } else {
                                     reject(`fs stat error ${file}, ${err}`);
                                 }
@@ -250,7 +261,7 @@ const uploads = {
                             rs = fs.createReadStream(file);
                             rs.on("error", err => {
                                 if (err.code === "EBUSY") {
-                                    reject(`file busy (read stream), retrying ${file}`);
+                                    reject({ message: `file busy (read stream), retrying ${file}`, retry: true });
                                 } else {
                                     reject(`fs read error ${file} ${err}`);
                                 }
