@@ -180,7 +180,7 @@ const uploads = {
             // we'll start this upload after the current one is complete
             return;
         }
-        this.connection().then(() => {
+        process.nextTick(() => {
             this._next();
         });
     },
