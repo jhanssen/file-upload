@@ -256,7 +256,7 @@ const uploads = {
                             }
                             const ps = progress({ length: stats.size, time: 1000 });
                             ps.on("progress", progress => {
-                                time.log("progress", progress.percentage, file, dst);
+                                time.log("progress", +progress.percentage.toFixed(1), file, dst);
                             });
                             rs = fs.createReadStream(file);
                             rs.on("error", err => {
