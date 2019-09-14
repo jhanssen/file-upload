@@ -160,16 +160,18 @@ const uploads = {
 
     connection: function() {
         return new Promise((resolve, reject) => {
-            if (this._connection)
+            if (this._connection) {
                 resolve(this._connection);
-            connection.connect().then(c => {
-                this._connection = c;
-                resolve(this._connection);
+            } else {
+                connection.connect().then(c => {
+                    this._connection = c;
+                    resolve(this._connection);
 
-                setTimeout(() => {
-                    this._connection = undefined;
-                }, reconnectTimeout);
-            });
+                    setTimeout(() => {
+                        this._connection = undefined;
+                    }, reconnectTimeout);
+                }).catch(e => { reject(e); });
+            }
         });
     },
 
